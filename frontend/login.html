@@ -66,49 +66,49 @@
             
             // Perform login and fetch evaluation ID
             try {
-                //const loginURL = "http://192.168.20.164:5000/api/v2/login";
-                //const loginURL = "https://eventretrieval.one/api/v2/login";
+                const loginURL = "http://192.168.20.164:5000/api/v2/login";
+                const loginURL = "https://eventretrieval.one/api/v2/login";
                 
-                //const loginResponse = await fetch(loginURL, {
-                //    method: "POST",
-                  //  headers: {
-                    //    'Content-Type': 'application/json'
-                    //},
-                    //body: JSON.stringify({
-                    //    'username': username,
-                    //    "password": password
-                    //})
-                //});
+                const loginResponse = await fetch(loginURL, {
+                    method: "POST",
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        'username': username,
+                        "password": password
+                    })
+                });
 
-                //if (!loginResponse.ok) {
-                  //  throw new Error('Login failed');
-                //}
+                if (!loginResponse.ok) {
+                    throw new Error('Login failed');
+                }
 
-                //const loginData = await loginResponse.json();
-                //const contestSessionID = loginData.sessionId;
+                const loginData = await loginResponse.json();
+                const contestSessionID = loginData.sessionId;
 
                 // Store the username and contestSessionID in localStorage
-               // localStorage.setItem('userName', username);
-                //localStorage.setItem('contestSessionID', contestSessionID);
+                localStorage.setItem('userName', username);
+                localStorage.setItem('contestSessionID', contestSessionID);
 
                 //const evaluationURL = `http://192.168.20.164:5000/api/v2/client/evaluation/list?session=${contestSessionID}`;
-                //const evaluationURL = `https://eventretrieval.one/api/v2/client/evaluation/list?session=${contestSessionID}`;
+                const evaluationURL = `https://eventretrieval.one/api/v2/client/evaluation/list?session=${contestSessionID}`;
 
-                //const evaluationResponse = await fetch(evaluationURL, {
-                //    method: "GET"
-                //});
+                const evaluationResponse = await fetch(evaluationURL, {
+                    method: "GET"
+                });
 
-                //if (!evaluationResponse.ok) {
-                //    throw new Error('Failed to fetch evaluation data');
-                //}
+                if (!evaluationResponse.ok) {
+                    throw new Error('Failed to fetch evaluation data');
+                }
 
-                //const evaluationData = await evaluationResponse.json();
-                //const evaluationID = evaluationData;
+                const evaluationData = await evaluationResponse.json();
+                const evaluationID = evaluationData;
                 // Store evaluationID in localStorage
-                //localStorage.setItem('evaluationID',evaluationID[0].id);
+                localStorage.setItem('evaluationID',evaluationID[0].id);
 
                 // Redirect to the main page
-                window.location.href = '/index.html';
+                window.location.href = 'index.html';
             } catch (error) {
                 console.error('Error during login process:', error);
                 alert('An error occurred during the login process. Please check your credentials and try again.');

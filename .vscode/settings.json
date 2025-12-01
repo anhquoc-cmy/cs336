@@ -6,5 +6,6 @@
         "backend/**",
         "database/**",
         "**/*.log"
-    ]
+    ],
+    "git.ignoreLimitWarning": true
 }

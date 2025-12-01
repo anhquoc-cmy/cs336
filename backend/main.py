@@ -11,8 +11,8 @@ import json
 import time
 import logging
 import asyncio
-import unicodedata  # <--- Mới: Dùng để xử lý tiếng Việt
-import re           # <--- Mới: Dùng để regex
+import unicodedata  
+import re          
 
 from typing import List, Optional, Dict, Any
 from functools import lru_cache
@@ -25,12 +25,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles  
 from pydantic import BaseModel
-
+from fastapi.responses import JSONResponse 
+import requests
 # ML/AI imports
 import torch
 import torch.nn.functional as F
 import open_clip
-
+from rapidfuzz import fuzz
 # Vector database imports
 from pymilvus import MilvusClient
 
@@ -95,7 +96,17 @@ class Config:
 
 # Global Application State
 # =======================
+# --- CẤU HÌNH DRES SUBMISSION ---
+DRES_BASE_URL = "http://192.168.28.151:5000"
+USERNAME = "team013"  
+PASSWORD = "123456" 
 
+class DresSubmission(BaseModel):
+    video_id: str
+    timestamp_ms: int
+    text_answer: Optional[str] = None
+    
+    
 class VectorSearchService:
     def __init__(self, config: Config):
         self.config = config
@@ -160,29 +171,58 @@ class VectorSearchService:
         if limit is None:
             limit = self.config.database.search_limit
 
-        # Xây dựng biểu thức lọc OCR nếu có
-        search_expr = ""
+        # 1. Tăng giới hạn tìm kiếm nếu có OCR (Over-fetching)
+        search_limit = limit
         if ocr_filter:
-            # Làm sạch từ khóa tìm kiếm trước
-            clean_ocr_query = self.clean_text(ocr_filter)
-            if clean_ocr_query:
-                # Tìm gần đúng (like %) trong trường ocr_text
-                search_expr = f'ocr_text like "%{clean_ocr_query}%"'
-                self.logger.info(f"🔎 Filtering with OCR: {search_expr}")
+            search_limit = limit * 2 # Lấy gấp đôi để lọc dần
         
-        return await asyncio.to_thread(
+        # 2. Tìm kiếm Vector (KHÔNG DÙNG filter="" ĐỂ TRÁNH LỖI)
+        # Chúng ta bỏ tham số filter đi để Milvus hiểu là tìm trên toàn bộ dữ liệu
+        res = await asyncio.to_thread(
             self.milvus_client.search,
             collection_name=self.config.database.collection_name,
             anns_field="embedding",
             data=[query_vector.tolist()[0]],
-            limit=limit,
-            filter=search_expr,  # <--- ĐÃ SỬA: Dùng filter thay vì expr
+            limit=search_limit, # Dùng search_limit đã tính ở trên
             output_fields=['path', 'time', 'frame_id', 'video', 'ocr_text'],
-            search_params={
-                "metric_type": "IP",
-                "params": {"nprobe": 128} 
-            }
+            search_params={"metric_type": "IP", "params": {"nprobe": 128}} 
         )
+
+        # 3. Chuyển đổi kết quả (Hit -> Dict) để tránh lỗi JSON Serializable
+        clean_res = []
+        for hits in res:
+            clean_hits = []
+            for hit in hits:
+                hit_dict = hit.to_dict() if hasattr(hit, 'to_dict') else dict(hit)
+                clean_hits.append(hit_dict)
+            clean_res.append(clean_hits)
+            
+        results = clean_res[0] if clean_res else []
+
+        # 4. Hậu xử lý: Fuzzy Matching OCR (Nếu người dùng có nhập OCR)
+        if ocr_filter and len(results) > 0:
+            filtered_results = []
+            clean_query = self.clean_text(ocr_filter)
+            
+            for item in results:
+                ocr_db = item['entity'].get('ocr_text', '')
+                if not ocr_db: continue
+                
+                # So sánh độ tương đồng văn bản
+                clean_db = self.clean_text(str(ocr_db))
+                score = fuzz.partial_ratio(clean_query, clean_db)
+                
+                # Nếu giống trên 60%, giữ lại và cộng điểm
+                if score >= 60:
+                    bonus = (score / 100.0) * 0.15 
+                    item['distance'] += bonus 
+                    filtered_results.append(item)
+            
+            # Sắp xếp lại và cắt đúng số lượng yêu cầu
+            filtered_results.sort(key=lambda x: x['distance'], reverse=True)
+            return [filtered_results[:limit]]
+
+        return [results[:limit]]
 
     # --- CẬP NHẬT: Nhận thêm ocr_query ---
     async def process_temporal_query(self, first_query: str, second_query: str = "", ocr_query: str = "") -> List[Any]:
@@ -368,7 +408,68 @@ def create_app(config_file: str = None) -> FastAPI:
     @app.get("/health")
     async def health_check():
         return {"status": "healthy"}
+    # --- API MỚI: XỬ LÝ SUBMIT DRES ---
+    @app.post("/dres/submit")
+    async def proxy_submit_to_dres(submission: DresSubmission):
+        try:
+            # 1. Login để lấy Session ID
+            login_url = f"{DRES_BASE_URL}/api/v2/login"
+            login_payload = {"username": USERNAME, "password": PASSWORD}
+            
+            session_resp = requests.post(login_url, json=login_payload, timeout=5)
+            if not session_resp.ok:
+                raise HTTPException(status_code=400, detail=f"DRES Login failed: {session_resp.text}")
+                
+            session_data = session_resp.json()
+            # Lấy sessionId, tùy version DRES key có thể là sessionId hoặc session_id
+            session_id = session_data.get("sessionId") or session_data.get("sessionID")
 
+            # 2. Lấy Evaluation ID đang Active
+            eval_url = f"{DRES_BASE_URL}/api/v2/client/evaluation/list"
+            eval_resp = requests.get(eval_url, params={"session": session_id}, timeout=5)
+            if not eval_resp.ok:
+                 raise HTTPException(status_code=400, detail="Failed to list evaluations")
+            
+            evaluations = eval_resp.json()
+            active_eval = next((e for e in evaluations if str(e.get("status")).upper() == "ACTIVE"), None)
+            
+            if not active_eval:
+                raise HTTPException(status_code=404, detail="No ACTIVE evaluation found")
+            
+            evaluation_id = active_eval.get("id")
+
+            # 3. Gửi Submit
+            submit_url = f"{DRES_BASE_URL}/api/v2/submit/{evaluation_id}"
+            
+            # Tính toán thời gian (ms)
+            timestamp_ms = submission.timestamp_ms
+            
+            if submission.text_answer:
+                # Logic cho VQA
+                answer_text = f"QA-{submission.text_answer}-{submission.video_id}-{timestamp_ms}"
+                body = {"answerSets": [{"answers": [{"text": answer_text}]}]}
+            else:
+                # Logic cho KIS
+                body = {
+                    "answerSets": [{
+                        "answers": [{
+                            "mediaItemName": submission.video_id,
+                            "start": timestamp_ms,
+                            "end": timestamp_ms
+                        }]
+                    }]
+                }
+
+            final_resp = requests.post(submit_url, params={"session": session_id}, json=body, timeout=10)
+            
+            if not final_resp.ok:
+                 return JSONResponse(status_code=final_resp.status_code, content=final_resp.json())
+
+            return final_resp.json()
+
+        except Exception as e:
+            print(f"Error submitting to DRES: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
     return app
 
 if __name__ == "__main__":

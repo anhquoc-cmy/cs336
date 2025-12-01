@@ -2,8 +2,12 @@
 
 
 // Perform search with debounce (prevents too many requests)
-const performSearch = debounce(async function (firstQuery, nextQuery) {
-  const cacheKey = `${firstQuery}:${nextQuery}`;
+// Perform search with debounce (prevents too many requests)
+// Đã thêm tham số ocrQuery vào hàm
+const performSearch = debounce(async function (firstQuery, nextQuery, ocrQuery = "") {
+  
+  // Update cacheKey để phân biệt các lần search có nội dung OCR khác nhau
+  const cacheKey = `${firstQuery}:${nextQuery}:${ocrQuery}`;
   
   if (searchCache.has(cacheKey)) {
     updateUIWithSearchResults(searchCache.get(cacheKey));
@@ -25,16 +29,19 @@ const performSearch = debounce(async function (firstQuery, nextQuery) {
 
     const [translatedFirstQuery, translatedNextQuery] = await translationPromise;
     const startTime = performance.now();
+    
+    // Gọi API Backend
     const response = await fetch("http://localhost:8000/TextQuery", {
       method: "POST",
       headers:{
-        'Content-Type': 'text/plain',
-            'Connection': 'keep-alive',
-    'Keep-Alive': 'timeout=1000'
+        'Content-Type': 'application/json', // Đổi thành application/json cho chuẩn
+        'Connection': 'keep-alive',
+        'Keep-Alive': 'timeout=1000'
       },
       body: JSON.stringify({
         First_query: translatedFirstQuery,
         Next_query: translatedNextQuery,
+        ocr_search: ocrQuery  // <--- Gửi thêm thông tin OCR xuống backend
       }),
       signal: currentAbortController.signal,
     });
@@ -43,16 +50,18 @@ const performSearch = debounce(async function (firstQuery, nextQuery) {
 
     data = await response.json();
 
+    const endTime = performance.now();
+    const duration = endTime - startTime;
 
-  const endTime = performance.now();
-  const duration = endTime - startTime;
-
-  console.log(`Fetch operation took ${duration.toFixed(2)} milliseconds`);
+    console.log(`Fetch operation took ${duration.toFixed(2)} milliseconds`);
     
     searchCache.set(cacheKey, data.kq);
     updateUIWithSearchResults(data.kq);
+    
+    // Cập nhật lại giao diện nếu cần (Optional)
     document.getElementById("Text-Query-First").value = data.fquery;
     document.getElementById("Text-Query-Second").value = data.nquery;
+
   } catch (error) {
     if (error.name !== 'AbortError') {
       console.error('Fetch error:', error);
@@ -87,7 +96,15 @@ async function performSearchFromTextareas() {
   const textareas = document.querySelectorAll('.Search_Scene textarea[name="Text_Query"]');
   const firstQuery = textareas[0].value;
   const nextQuery = textareas[1] ? textareas[1].value : "";
-  performSearch(firstQuery, nextQuery);
+
+  const ocrTextareas = document.querySelectorAll('.Search_Scene textarea[name="Ocr_Query"]');
+  let ocrQuery = "";
+  ocrTextareas.forEach(textarea => {
+      if (textarea.value.trim()) {
+          ocrQuery += textarea.value.trim() + " ";
+      }
+  });
+  performSearch(firstQuery, nextQuery, ocrQuery.trim());
 }
 
 document.getElementById("search-button").addEventListener("click", function(event) {

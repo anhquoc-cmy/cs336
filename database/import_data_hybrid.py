@@ -11,7 +11,7 @@ COLLECTION_NAME = "AIC_2024_1"
 DIMENSION = 1024 
 
 # Set = True: Xóa sạch làm lại từ đầu
-RESET_DB = True 
+RESET_DB = False
 
 DATA_DIR = "./data_for_milvus" 
 
@@ -44,7 +44,7 @@ def import_data_hybrid():
         index_params = client.prepare_index_params()
         index_params.add_index(
             field_name="embedding", 
-            index_type="IVF_FLAT",
+            index_type="IVF_SQ8",
             metric_type="IP", 
             params={"nlist": 1024}
         )

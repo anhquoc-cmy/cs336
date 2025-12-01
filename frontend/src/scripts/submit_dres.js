@@ -99,37 +99,58 @@ function submit_to_dres_but_dare_devil(item, frame){
 
 
 async function submit_to_dres_v2() {
-    let frame_info = 0;
-    const evaluationID = localStorage.getItem('evaluationID');
-    const contestSessionID = localStorage.getItem('contestSessionID');
-    //const contestURL = `http://192.168.20.164:5000/api/v2/submit/${evaluationID}?session=${contestSessionID}`;
-    const contestURL = `https://eventretrieval.one/api/v2/submit/${evaluationID}?session=${contestSessionID}`;
+    const backendSubmitUrl = "http://localhost:8000/dres/submit";
+    let payload = {};
 
-    if (activeTask == "kis") {
-        frame_info = getFirstResultForKIS();
-        const item = frame_info.frameInfo.split('-')[0];
-        const frame = parseFloat(frame_info.frameId.toFixed(2)) * 1000.0;
-        await submitFrameInfo(contestURL, {
-            "answerSets": [{
-                "answers": [{
-                    "mediaItemName": item,
-                    "start": frame,
-                    "end": frame
-                }]
-            }]
+    try {
+        if (activeTask === "kis") {
+            const frame_info = getFirstResultForKIS();
+            if (!frame_info) { alert("Chưa chọn ảnh!"); return; }
+
+            const item = frame_info.frameInfo.split('-')[0];
+            // frameId hiện tại đang là giây (float), nhân 1000 và làm tròn thành int
+            const ms = Math.round(parseFloat(frame_info.frameId) * 1000); 
+
+            payload = {
+                "video_id": item,
+                "timestamp_ms": ms, // Gửi số nguyên mili-giây
+                "text_answer": null
+            };
+
+        } else {
+            const frame_info = getFirstResultForVQA();
+            if (!frame_info || !frame_info[0]) { alert("Chưa có thông tin VQA!"); return; }
+
+            const item = frame_info[0].frameInfo.split('-')[0];
+            const answer_vqa = frame_info[1];
+            const ms = Math.round(parseFloat(frame_info[0].frameId) * 1000);
+
+            payload = {
+                "video_id": item,
+                "timestamp_ms": ms,
+                "text_answer": answer_vqa
+            };
+        }
+
+        console.log("Sending payload:", payload); // Log để kiểm tra
+
+        const response = await fetch(backendSubmitUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
         });
-    } else {
-        frame_info = getFirstResultForVQA();
-        const item = frame_info[0].frameInfo.split('-')[0];
-        const answer_vqa = frame_info[1];
-        const frame = parseFloat(frame_info[0].frameId.toFixed(2)) * 1000.0;
-        await submitFrameInfo(contestURL, {
-            "answerSets": [{
-                "answers": [{
-                    "text": `${answer_vqa}-${item}-${frame}`
-                }]
-            }]
-        });
+
+        const data = await response.json();
+        
+        if (response.ok) {
+            alert("✅ SUBMIT THÀNH CÔNG!\n" + JSON.stringify(data));
+        } else {
+            console.error(data);
+            alert("❌ LỖI TỪ BACKEND: " + (data.detail || JSON.stringify(data)));
+        }
+
+    } catch (error) {
+        alert("❌ LỖI HỆ THỐNG: " + error.message);
     }
 }
 
